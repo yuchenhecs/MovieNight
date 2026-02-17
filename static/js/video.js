@@ -19,12 +19,6 @@ function initPlayer() {
     flvPlayer.attachMediaElement(videoElement);
     flvPlayer.load();
     flvPlayer.play();
-
-    let overlay = document.querySelector('#videoOverlay');
-    overlay.onclick = () => {
-        overlay.style.display = 'none';
-        videoElement.muted = false;
-    };
 }
 
 window.addEventListener('load', initPlayer);
