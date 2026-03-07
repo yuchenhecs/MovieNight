@@ -4,7 +4,12 @@
 
 **Stream Flow:**
 ```
-OBS (Shanghai) → HK Relay (FFmpeg) → US Server (MovieNight) → Viewers
+OBS (Shanghai) → HK Relay (FFmpeg :1935) → US Server (MovieNight :1935) → Viewers
+```
+
+**Viewer Flow (HK friends):**
+```
+HK Viewer → HK Relay (nginx :8089) → US Server (MovieNight :8089)
 ```
 
 **Servers:**
@@ -301,8 +306,114 @@ sudo systemctl restart movienight
 | Server | Port | Protocol | Purpose |
 |--------|------|----------|---------|
 | HK Relay | 1935 | TCP | RTMP input from OBS |
+| HK Relay | 8089 | TCP | Nginx reverse proxy for HK viewers |
 | US Server | 1935 | TCP | RTMP input from HK relay |
 | US Server | 8089 | TCP | HTTP website for viewers |
+
+---
+
+## HK Viewer Relay (Nginx Reverse Proxy)
+
+For friends in Hong Kong who have network issues connecting directly to the US server,
+set up an nginx reverse proxy on the HK VM. Traffic between Azure VMs uses Azure's
+backbone network, which is much more reliable than public internet.
+
+**Viewer Flow:**
+```
+HK Viewer → HK VM (nginx :8089) → US Server (MovieNight :8089)
+US Viewer → US Server (MovieNight :8089)
+```
+
+### 1. Install nginx
+
+```bash
+sudo apt update
+sudo apt install -y nginx
+```
+
+### 2. Configure nginx
+
+```bash
+sudo nano /etc/nginx/sites-available/movienight
+```
+
+Add this content:
+
+```nginx
+server {
+    listen 8089;
+
+    location / {
+        proxy_pass http://<US_SERVER_IP>:8089;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    # WebSocket for chat
+    location /ws {
+        proxy_pass http://<US_SERVER_IP>:8089;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+    }
+
+    # FLV video stream - disable buffering for real-time delivery
+    location /live {
+        proxy_pass http://<US_SERVER_IP>:8089;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+        chunked_transfer_encoding on;
+    }
+}
+```
+
+**Note:** Replace `<US_SERVER_IP>` with the actual US server IP address.
+
+### 3. Enable site and start nginx
+
+```bash
+sudo ln -s /etc/nginx/sites-available/movienight /etc/nginx/sites-enabled/
+sudo rm /etc/nginx/sites-enabled/default
+sudo nginx -t
+sudo systemctl enable nginx
+sudo systemctl restart nginx
+```
+
+### 4. Open firewall port
+
+```bash
+sudo ufw allow 8089/tcp
+```
+
+Also open port 8089/TCP in the Azure portal's Network Security Group for the HK VM.
+
+### 5. Access
+
+HK viewers go to: `http://<HK_RELAY_IP>:8089`
+
+### Troubleshooting
+
+View nginx logs:
+```bash
+sudo tail -f /var/log/nginx/error.log
+sudo tail -f /var/log/nginx/access.log
+```
+
+Restart nginx:
+```bash
+sudo systemctl restart nginx
+```
 
 ---
 
