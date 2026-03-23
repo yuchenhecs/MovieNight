@@ -353,7 +353,17 @@ func handleIndexTemplate(w http.ResponseWriter, r *http.Request) {
 }
 
 func handlePublish(conn *rtmp.Conn) {
-	streams, _ := conn.Streams()
+	streams, err := conn.Streams()
+	if err != nil {
+		common.LogErrorf("Error getting streams from RTMP connection: %v\n", err)
+	}
+
+	// Log received stream tracks
+	for i, s := range streams {
+		if s != nil {
+			common.LogInfof("Stream track %d: %v\n", i, s.Type())
+		}
+	}
 
 	l.Lock()
 	common.LogDebugln("request string->", conn.URL.RequestURI())
@@ -392,7 +402,7 @@ func handlePublish(conn *rtmp.Conn) {
 
 	ch := &Channel{}
 	ch.que = pubsub.NewQueue()
-	err := ch.que.WriteHeader(streams)
+	err = ch.que.WriteHeader(streams)
 	if err != nil {
 		common.LogErrorf("Could not write header to streams: %v\n", err)
 	}

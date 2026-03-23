@@ -10,16 +10,22 @@ function initPlayer() {
     let videoElement = document.querySelector('#videoElement');
     let loadingOverlay = document.querySelector('#loadingOverlay');
     let loadingText = document.querySelector('#loadingText');
-    let isReady = false;
-    let playRequested = false;
     let flvPlayer = null;
     let retryInterval = null;
     let isRetrying = false;
-    let hasAttemptedPlay = false;
+    let overlayHidden = false;
 
     function hideLoadingOverlay() {
-        if (loadingOverlay) {
+        if (loadingOverlay && !overlayHidden) {
             loadingOverlay.style.display = 'none';
+            overlayHidden = true;
+        }
+    }
+
+    function showLoadingOverlay() {
+        if (loadingOverlay) {
+            loadingOverlay.style.display = 'flex';
+            overlayHidden = false;
         }
     }
 
@@ -41,7 +47,6 @@ function initPlayer() {
             }
             flvPlayer = null;
         }
-        hasAttemptedPlay = false;
     }
 
     function stopRetrying() {
@@ -55,7 +60,7 @@ function initPlayer() {
     function startPlayer() {
         console.log('Initializing player...');
         cleanupPlayer();
-        isReady = false;
+        showLoadingOverlay();
 
         flvPlayer = mpegts.createPlayer({
             type: 'flv',
@@ -68,63 +73,54 @@ function initPlayer() {
 
         flvPlayer.attachMediaElement(videoElement);
 
-        // Listen for mpegts.js errors BEFORE loading
         flvPlayer.on(mpegts.Events.ERROR, (errorType, errorDetail, errorInfo) => {
             console.error('Player error:', errorType, errorDetail, errorInfo);
 
-            if (errorType === mpegts.ErrorTypes.NETWORK_ERROR) {
-                if (!isRetrying) {
+            if (!isRetrying) {
+                if (errorType === mpegts.ErrorTypes.NETWORK_ERROR) {
                     updateLoadingText('Connection lost. Retrying...');
-                    startRetrying();
-                }
-            } else if (errorType === mpegts.ErrorTypes.MEDIA_ERROR) {
-                if (!isRetrying) {
+                } else if (errorType === mpegts.ErrorTypes.MEDIA_ERROR) {
                     updateLoadingText('Media error. Retrying...');
-                    startRetrying();
                 }
+                startRetrying();
             }
         });
 
-        // Now load the stream
         flvPlayer.load();
 
-        // Mark as ready when video can play
-        videoElement.addEventListener('loadedmetadata', () => {
-            console.log('Stream metadata loaded');
-            // Only try to play once we have metadata
-            if (!hasAttemptedPlay) {
-                hasAttemptedPlay = true;
-                videoElement.play().catch(err => {
-                    console.log('Autoplay blocked:', err);
-                });
-            }
-        }, { once: true });
-
-        videoElement.addEventListener('canplay', () => {
+        // Hide overlay and start playback once we have data
+        function onCanPlay() {
             console.log('Stream ready to play');
-            isReady = true;
             hideLoadingOverlay();
             stopRetrying();
+            videoElement.play().catch(err => {
+                console.log('Play failed:', err);
+            });
+        }
 
-            // If user clicked play while loading, play now
-            if (playRequested) {
-                console.log('Playing video (deferred from early click)');
-                videoElement.play();
-                playRequested = false;
+        function onTimeUpdate() {
+            // If we're getting time updates, the stream is playing
+            if (videoElement.currentTime > 0) {
+                hideLoadingOverlay();
+                stopRetrying();
             }
+        }
+
+        videoElement.addEventListener('canplay', onCanPlay, { once: true });
+        videoElement.addEventListener('playing', () => {
+            console.log('Stream is playing');
+            hideLoadingOverlay();
+            stopRetrying();
+        }, { once: true });
+        videoElement.addEventListener('timeupdate', onTimeUpdate);
+
+        videoElement.addEventListener('loadedmetadata', () => {
+            console.log('Stream metadata loaded');
+            videoElement.play().catch(err => {
+                console.log('Autoplay blocked:', err);
+            });
         }, { once: true });
 
-        // Intercept play attempts and defer if not ready
-        videoElement.addEventListener('play', (e) => {
-            if (!isReady) {
-                console.log('Play requested but stream not ready yet, will play when ready');
-                playRequested = true;
-                e.preventDefault();
-                videoElement.pause();
-            }
-        });
-
-        // Handle video errors
         videoElement.addEventListener('error', (e) => {
             console.error('Video error:', e);
             if (!isRetrying) {
@@ -138,9 +134,9 @@ function initPlayer() {
         if (isRetrying) return;
 
         isRetrying = true;
+        showLoadingOverlay();
         console.log('Starting retry mechanism...');
 
-        // Retry every 5 seconds
         retryInterval = setInterval(() => {
             console.log('Retrying connection...');
             startPlayer();
@@ -152,7 +148,7 @@ function initPlayer() {
 
     // Check if stream is taking too long to load initially
     setTimeout(() => {
-        if (!isReady && loadingOverlay && loadingOverlay.style.display !== 'none') {
+        if (!overlayHidden) {
             if (!isRetrying) {
                 updateLoadingText('Waiting for stream to start...');
                 startRetrying();
